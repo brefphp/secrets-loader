@@ -1,21 +1,22 @@
 {
-    "name": "mnapoli/myproject",
-    "description": "Give it a nice description!",
-    "keywords": [],
+    "name": "bref/secrets-loader",
+    "description": "Load secret values from SSM into environment variables ",
+    "keywords": ["bref", "secrets", "aws-ssm", "ssm"],
     "license": "MIT",
     "type": "library",
     "autoload": {
         "psr-4": {
-            "MyProject\\": "src/"
+            "Bref\\Secrets\\": "src/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "MyProject\\Test\\": "tests/"
+            "Bref\\Secrets\\Test\\": "tests/"
         }
     },
     "require": {
-        "php": ">=8.0"
+        "php": ">=8.0",
+        "async-aws/ssm": "^1.3"
     },
     "require-dev": {
         "phpunit/phpunit": "^9.0",
