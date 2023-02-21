@@ -4,6 +4,7 @@ namespace Bref\Secrets;
 
 use AsyncAws\Ssm\SsmClient;
 use Closure;
+use JsonException;
 use RuntimeException;
 
 class Secrets
@@ -11,7 +12,9 @@ class Secrets
     /**
      * Decrypt environment variables that are encrypted with AWS SSM.
      *
-     * @param SsmClient $ssmClient To allow mocking in tests.
+     * @param SsmClient|null $ssmClient To allow mocking in tests.
+     *
+     * @throws JsonException
      */
     public static function loadSecretEnvironmentVariables(?SsmClient $ssmClient = null): void
     {
@@ -62,13 +65,15 @@ class Secrets
      *
      * @param Closure(): array<string, string> $paramResolver
      * @return array<string, string> Map of parameter name -> value
+     *
+     * @throws JsonException
      */
     private static function readParametersFromCacheOr(Closure $paramResolver): array
     {
         // Check in cache first
         $cacheFile = sys_get_temp_dir() . '/bref-ssm-parameters.php';
         if (is_file($cacheFile)) {
-            $parameters = json_decode(file_get_contents($cacheFile), true);
+            $parameters = json_decode(file_get_contents($cacheFile), true, 512, JSON_THROW_ON_ERROR);
             if (is_array($parameters)) {
                 return $parameters;
             }
@@ -78,7 +83,7 @@ class Secrets
         $parameters = $paramResolver();
 
         // Using json_encode instead of var_export due to possible security issues
-        file_put_contents($cacheFile, json_encode($parameters));
+        file_put_contents($cacheFile, json_encode($parameters, JSON_THROW_ON_ERROR));
 
         return $parameters;
     }
