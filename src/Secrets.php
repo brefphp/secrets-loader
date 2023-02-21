@@ -13,7 +13,6 @@ class Secrets
      * Decrypt environment variables that are encrypted with AWS SSM.
      *
      * @param SsmClient|null $ssmClient To allow mocking in tests.
-     *
      * @throws JsonException
      */
     public static function loadSecretEnvironmentVariables(?SsmClient $ssmClient = null): void
@@ -65,7 +64,6 @@ class Secrets
      *
      * @param Closure(): array<string, string> $paramResolver
      * @return array<string, string> Map of parameter name -> value
-     *
      * @throws JsonException
      */
     private static function readParametersFromCacheOr(Closure $paramResolver): array
