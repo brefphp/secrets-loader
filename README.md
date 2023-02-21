@@ -1,46 +1,24 @@
-# My Awesome Project
+Automatically load secrets from SSM into environment variables when running with Bref.
 
-This is the catchphrase: what does this project do and how is it unique?
+It replaces (at runtime) the variables whose value starts with `bref-ssm:`. For example, you could set such a variable in `serverless.yml` like this:
 
-[![Build Status](https://img.shields.io/travis/com/PHP-DI/PHP-DI/master.svg?style=flat-square)](https://travis-ci.com/PHP-DI/PHP-DI)
-[![Latest Version](https://img.shields.io/github/release/PHP-DI/PHP-DI.svg?style=flat-square)](https://packagist.org/packages/PHP-DI/php-di)
-[![Total Downloads](https://img.shields.io/packagist/dt/PHP-DI/PHP-DI.svg?style=flat-square)](https://packagist.org/packages/PHP-DI/php-di)
+```yaml
+provider:
+    # ...
+    environment:
+        MY_PARAMETER: bref-ssm:/my-app/my-parameter
+```
 
-Here is an additional quick introduction, if necessary.
+In AWS Lambda, the `MY_PARAMETER` would be automatically replaced and would contain the value stored at `/my-app/my-parameter` in AWS SSM Parameters.
 
-## Why?
-
-Why does this project exist? Come on, don't delete this part. Fill it.
-Yes it's hard, but it's perhaps the most important part of the README.
-
-As to why *this* project exist, it's to serve as a template for future open
-source PHP projects. Of course, feel free to fork it and make your own recipe.
+This feature is extracted to a separate package so that all its code and dependencies are not installed by default for all Bref users. Install this package if you want to use the feature.
 
 ## Installation
 
-Describe how to install the project/library/framework/…
-
-Make sure your installation instructions work by testing them!
+```
+composer require bref/secrets-loader
+```
 
 ## Usage
 
-Describe how to use the project. A gif or a short code example is the best
-way to show how it works. Also keep paragraphs short and sentences simple: not
-everybody speaks english well.
-
-For the sake of the example here is how you can use this project template
-as a basis for your own repository:
-
-```bash
-git clone https://github.com/mnapoli/project-template.git my-project
-cd my-project
-# Remove the git repository metadata
-rm -rf .git/
-# Start a brand new repository
-git init
-git add .
-```
-
-Easy peasy! Now you just have to code.
-
-Make sure your examples work by testing them! I didn't test mine and I should feel ashamed.
+Read the Bref documentation: https://bref.sh/docs/environment/variables.html#secrets
