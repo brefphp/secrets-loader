@@ -11,7 +11,7 @@ provider:
 
 In AWS Lambda, the `MY_PARAMETER` would be automatically replaced and would contain the value stored at `/my-app/my-parameter` in AWS SSM Parameters.
 
-This feature is extracted to a separate package so that all its code and dependencies are not installed by default for all Bref users. Install this package if you want to use the feature.
+This feature is shipped as a separate package so that all its code and dependencies are not installed by default for all Bref users. Install this package if you want to use the feature.
 
 ## Installation
 
