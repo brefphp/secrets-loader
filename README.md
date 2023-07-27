@@ -22,3 +22,4 @@ composer require bref/secrets-loader
 ## Usage
 
 Read the Bref documentation: https://bref.sh/docs/environment/variables.html#secrets
+
