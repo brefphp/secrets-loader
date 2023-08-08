@@ -91,7 +91,6 @@ class Secrets
      * restart on every invocation (or on error), so we don't want to
      * call SSM/SecretsManager every time.
      *
-     * @param string $paramType
      * @param Closure(): array<string, string> $paramResolver
      * @return array<string, string> Map of parameter name -> value
      * @throws JsonException
