@@ -48,6 +48,17 @@ class SecretsTest extends TestCase
         $this->assertSame('foobar', getenv('SOME_VARIABLE'));
     }
 
+    public function test that parameter can have a default value(): void
+    {
+        putenv('SOME_VARIABLE=bref-ssm:/some/undefined-parameter;default-value');
+
+        $ssmClient = $this->mockSsmClient();
+        Secrets::loadSecretEnvironmentVariables($ssmClient);
+
+        // Check that the variable has the default value
+        $this->assertSame('default-value', getenv('SOME_VARIABLE'));
+    }
+
     public function test throws a clear error message on missing permissions(): void
     {
         putenv('SOME_VARIABLE=bref-ssm:/app/test');
