@@ -42,6 +42,9 @@ class Secrets
             return self::retrieveParametersFromSsm($ssmClient, array_values($ssmNames));
         });
 
+        // Remove default values from parameter names
+        $ssmNames = array_map(static fn($name) => explode(';', $name, 2)[0], $ssmNames);
+
         foreach ($parameters as $parameterName => $parameterValue) {
             $envVar = array_search($parameterName, $ssmNames, true);
             $_SERVER[$envVar] = $_ENV[$envVar] = $parameterValue;
@@ -99,6 +102,16 @@ class Secrets
         /** @var array<string, string> $parameters Map of parameter name -> value */
         $parameters = [];
         $parametersNotFound = [];
+        // Store default values for parameters
+        $parametersDefaults = array_reduce($ssmNames, static function ($carry, $item) {
+            [ $paramName, $defaultValue ] = explode(';', $item) + [ null, null ];
+
+            return $paramName !== null && $defaultValue !== null
+                ? array_merge($carry, [ $paramName => $defaultValue ])
+                : $carry;
+        }, []);
+        // Remove default values from parameter names for querying SSM
+        $ssmNames = array_map(static fn($name) => explode(';', $name, 2)[0], $ssmNames);
 
         // The API only accepts up to 10 parameters at a time, so we batch the calls
         foreach (array_chunk($ssmNames, 10) as $batchOfSsmNames) {
@@ -123,6 +136,20 @@ class Secrets
             }
             $parametersNotFound = array_merge($parametersNotFound, $result->getInvalidParameters());
         }
+
+        // check any of the invalid parameters has a default value
+        $parametersNotFound = array_filter($parametersNotFound, static function($parameter) use (&$parameters, $parametersDefaults): bool {
+            // check if the parameter has a default value
+            if (array_key_exists($parameter, $parametersDefaults)) {
+                // load default value
+                $parameters[$parameter] = $parametersDefaults[$parameter];
+
+                // remove it from the not found list
+                return false;
+            }
+
+            return true;
+        });
 
         if (count($parametersNotFound) > 0) {
             throw new RuntimeException('The following SSM parameters could not be found: ' . implode(', ', $parametersNotFound));
