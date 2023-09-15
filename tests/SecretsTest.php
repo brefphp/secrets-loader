@@ -50,13 +50,23 @@ class SecretsTest extends TestCase
 
     public function test that parameter can have a default value(): void
     {
-        putenv('SOME_VARIABLE=bref-ssm:/some/undefined-parameter;default-value');
+        putenv('SOME_VARIABLE_WITH_DEFAULT=bref-ssm:/some/undefined-parameter;default-value');
 
-        $ssmClient = $this->mockSsmClient();
+        $ssmClient = $this->getMockBuilder(SsmClient::class)
+            ->disableOriginalConstructor()
+            ->getMock();
+        $result = ResultMockFactory::create(GetParametersResult::class, [
+            'InvalidParameters' => [
+                '/some/undefined-parameter',
+            ],
+        ]);
+        $ssmClient->method('getParameters')
+            ->willReturn($result);
+
         Secrets::loadSecretEnvironmentVariables($ssmClient);
 
         // Check that the variable has the default value
-        $this->assertSame('default-value', getenv('SOME_VARIABLE'));
+        $this->assertSame('default-value', getenv('SOME_VARIABLE_WITH_DEFAULT'));
     }
 
     public function test throws a clear error message on missing permissions(): void
