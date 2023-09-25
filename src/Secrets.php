@@ -2,8 +2,10 @@
 
 namespace Bref\Secrets;
 
+use AsyncAws\SecretsManager\SecretsManagerClient;
 use AsyncAws\Ssm\SsmClient;
 use Closure;
+use Exception;
 use JsonException;
 use RuntimeException;
 
@@ -13,9 +15,10 @@ class Secrets
      * Decrypt environment variables that are encrypted with AWS SSM.
      *
      * @param SsmClient|null $ssmClient To allow mocking in tests.
+     * @param SecretsManagerClient|null $secretsManagerClient To allow mocking in tests.
      * @throws JsonException
      */
-    public static function loadSecretEnvironmentVariables(?SsmClient $ssmClient = null): void
+    public static function loadSecretEnvironmentVariables(?SsmClient $ssmClient = null, ?SecretsManagerClient $secretsManagerClient = null): void
     {
         /** @var array<string,string>|string|false $envVars */
         $envVars = getenv(local_only: true); // @phpstan-ignore-line PHPStan is wrong
@@ -23,36 +26,64 @@ class Secrets
             return;
         }
 
-        // Only consider environment variables that start with "bref-ssm:"
+        // Only consider environment variables that start with "bref-ssm:" or "bref-secretsmanager:"
         $envVarsToDecrypt = array_filter($envVars, function (string $value): bool {
-            return str_starts_with($value, 'bref-ssm:');
+            return str_starts_with($value, 'bref-ssm:') || str_starts_with($value, 'bref-secretsmanager:');
         });
         if (empty($envVarsToDecrypt)) {
             return;
         }
+ 
+        $ssmNames = [];
+        $secretsManagerNames = [];
 
-        // Extract the SSM parameter names by removing the "bref-ssm:" prefix
-        $ssmNames = array_map(function (string $value): string {
-            return substr($value, strlen('bref-ssm:'));
-        }, $envVarsToDecrypt);
+        // Extract the SSM and SecretsManager parameter names by removing the prefixes
+        foreach ($envVarsToDecrypt as $key => $envVar) {
+            if (str_starts_with($envVar, 'bref-ssm:')) {
+                $ssmNames[$key] = substr($envVar, strlen('bref-ssm:'));
+            }
+            if (str_starts_with($envVar, 'bref-secretsmanager:')) {
+                $secretsManagerNames[$key] = substr($envVar, strlen('bref-secretsmanager:'));
+            }
+        }
+
+        if (count($secretsManagerNames) > 0 && class_exists(SecretsManagerClient::class) === false) {
+            throw new RuntimeException('In order to load secrets from SecretsManager you must install "async-aws/secrets-manager" package');
+        }
 
         $actuallyCalledSsm = false;
-        $parameters = self::readParametersFromCacheOr(function () use ($ssmClient, $ssmNames, &$actuallyCalledSsm) {
-            $actuallyCalledSsm = true;
-            return self::retrieveParametersFromSsm($ssmClient, array_values($ssmNames));
-        });
+        if (count($ssmNames) > 0) {
+            $ssmParameters = self::readParametersFromCacheOr('ssm', function () use ($ssmClient, $ssmNames, &$actuallyCalledSsm) {
+                $actuallyCalledSsm = true;
+                return self::retrieveParametersFromSsm($ssmClient, array_values($ssmNames));
+            });
 
-        foreach ($parameters as $parameterName => $parameterValue) {
-            $envVar = array_search($parameterName, $ssmNames, true);
-            $_SERVER[$envVar] = $_ENV[$envVar] = $parameterValue;
-            putenv("$envVar=$parameterValue");
+            foreach ($ssmParameters as $parameterName => $parameterValue) {
+                $envVar = array_search($parameterName, $ssmNames, true);
+                $_SERVER[$envVar] = $_ENV[$envVar] = $parameterValue;
+                putenv("$envVar=$parameterValue");
+            }
+        }
+
+        $actuallyCalledSecretsManager = false;
+        if (count($secretsManagerNames) > 0) {
+            $secretsManagerParameters = self::readParametersFromCacheOr('secretsmanager', function () use ($secretsManagerClient, $secretsManagerNames, &$actuallyCalledSecretsManager) {
+                $actuallyCalledSecretsManager = true;
+                return self::retrieveParametersFromSecretsManager($secretsManagerClient, array_values($secretsManagerNames));
+            });
+
+            foreach ($secretsManagerParameters as $parameterName => $parameterValue) {
+                $envVar = array_search($parameterName, $secretsManagerNames, true);
+                $_SERVER[$envVar] = $_ENV[$envVar] = $parameterValue;
+                putenv("$envVar=$parameterValue");
+            }
         }
 
         // Only log once (when the cache was empty) else it might spam the logs in the function runtime
         // (where the process restarts on every invocation)
-        if ($actuallyCalledSsm) {
+        if ($actuallyCalledSsm || $actuallyCalledSecretsManager) {
             $stderr = fopen('php://stderr', 'ab');
-            fwrite($stderr, '[Bref] Loaded these environment variables from SSM: ' . implode(', ', array_keys($envVarsToDecrypt)) . PHP_EOL);
+            fwrite($stderr, '[Bref] Loaded these environment variables from SSM/SecretsManager: ' . implode(', ', array_keys($envVarsToDecrypt)) . PHP_EOL);
         }
     }
 
@@ -60,16 +91,16 @@ class Secrets
      * Cache the parameters in a temp file.
      * Why? Because on the function runtime, the PHP process might
      * restart on every invocation (or on error), so we don't want to
-     * call SSM every time.
+     * call SSM/SecretsManager every time.
      *
      * @param Closure(): array<string, string> $paramResolver
      * @return array<string, string> Map of parameter name -> value
      * @throws JsonException
      */
-    private static function readParametersFromCacheOr(Closure $paramResolver): array
+    private static function readParametersFromCacheOr(string $paramType, Closure $paramResolver): array
     {
         // Check in cache first
-        $cacheFile = sys_get_temp_dir() . '/bref-ssm-parameters.php';
+        $cacheFile = sprintf('%s/bref-%s-parameters.php', sys_get_temp_dir(), $paramType);
         if (is_file($cacheFile)) {
             $parameters = json_decode(file_get_contents($cacheFile), true, 512, JSON_THROW_ON_ERROR);
             if (is_array($parameters)) {
@@ -82,6 +113,54 @@ class Secrets
 
         // Using json_encode instead of var_export due to possible security issues
         file_put_contents($cacheFile, json_encode($parameters, JSON_THROW_ON_ERROR));
+
+        return $parameters;
+    }
+
+    /**
+     * @param string[] $secretIds
+     * @return array<string, string> Map of parameter name -> value
+     * @throws JsonException
+     */
+    private static function retrieveParametersFromSecretsManager(
+        ?SecretsManagerClient $secretsManagerClient,
+        array $secretIds
+    ): array {
+        if (! class_exists(SecretsManagerClient::class)) {
+            throw new Exception('The "async-aws/secrets-manager" package is required to load secrets from Secrets Manager via the "bref-secretsmanager:xxx" syntax in environment variables. Please add it to your "require" section in composer.json.');
+        }
+
+        $secretsManager = $secretsManagerClient ?? new SecretsManagerClient([
+            'region' => $_ENV['AWS_REGION'] ?? $_ENV['AWS_DEFAULT_REGION'],
+        ]);
+
+        /** @var array<string, string> $parameters Map of parameter name -> value */
+        $parameters = [];
+        $parametersNotFound = [];
+
+        foreach ($secretIds as $secretId) {
+            try {
+                $result = $secretsManager->getSecretValue([
+                    'SecretId' => $secretId,
+                ]);
+                $secretString = $result->getSecretString();
+
+                $parameters[$secretId] = $secretString;
+            } catch (RuntimeException $e) {
+                $parametersNotFound[$secretId] = $e;
+            }
+        }
+
+        if (count($parametersNotFound) > 0) {
+            array_walk($parametersNotFound, function(&$value, $key) { 
+                $message = $value->getMessage();
+                $value = "$key ($message)"; 
+            });
+
+            throw new RuntimeException(
+                'The following SecretsManager parameters could not be found: ' . implode(', ', $parametersNotFound) .'. Did you add IAM permissions in serverless.yml to allow Lambda to access SecretsManager?',
+            );
+        }
 
         return $parameters;
     }

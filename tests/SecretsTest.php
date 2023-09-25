@@ -3,6 +3,8 @@
 namespace Bref\Secrets\Test;
 
 use AsyncAws\Core\Test\ResultMockFactory;
+use AsyncAws\SecretsManager\Result\GetSecretValueResponse;
+use AsyncAws\SecretsManager\SecretsManagerClient;
 use AsyncAws\Ssm\Result\GetParametersResult;
 use AsyncAws\Ssm\SsmClient;
 use AsyncAws\Ssm\ValueObject\Parameter;
@@ -15,6 +17,9 @@ class SecretsTest extends TestCase
     {
         if (file_exists(sys_get_temp_dir() . '/bref-ssm-parameters.php')) {
             unlink(sys_get_temp_dir() . '/bref-ssm-parameters.php');
+        }
+        if (file_exists(sys_get_temp_dir() . '/bref-secretsmanager-parameters.php')) {
+            unlink(sys_get_temp_dir() . '/bref-secretsmanager-parameters.php');
         }
     }
 
@@ -36,14 +41,74 @@ class SecretsTest extends TestCase
         $this->assertSame('helloworld', getenv('SOME_OTHER_VARIABLE'));
     }
 
+    public function test decrypts env variables from Secrets Manager(): void
+    {
+        putenv('SOME_VARIABLE=bref-secretsmanager:/some/parameter');
+        putenv('SOME_OTHER_VARIABLE=helloworld');
+
+        // Sanity checks
+        $this->assertSame('bref-secretsmanager:/some/parameter', getenv('SOME_VARIABLE'));
+        $this->assertSame('helloworld', getenv('SOME_OTHER_VARIABLE'));
+
+        Secrets::loadSecretEnvironmentVariables(null, $this->mockSecretsManagerClient());
+
+        $this->assertSame('foobar', getenv('SOME_VARIABLE'));
+
+        // Check that the other variable was not modified
+        $this->assertSame('helloworld', getenv('SOME_OTHER_VARIABLE'));
+    }
+
+    public function test decrypts env variables from both SSM and Secrets Manager(): void
+    {
+        putenv('SOME_VARIABLE=bref-ssm:/some/parameter');
+        putenv('SOME_VARIABLE_1=bref-secretsmanager:/some/parameter');
+        putenv('SOME_OTHER_VARIABLE=helloworld');
+
+        // Sanity checks
+        $this->assertSame('bref-ssm:/some/parameter', getenv('SOME_VARIABLE'));
+        $this->assertSame('bref-secretsmanager:/some/parameter', getenv('SOME_VARIABLE_1'));
+        $this->assertSame('helloworld', getenv('SOME_OTHER_VARIABLE'));
+
+        Secrets::loadSecretEnvironmentVariables($this->mockSsmClient(), $this->mockSecretsManagerClient());
+
+        // Check value from SSM
+        $this->assertSame('foobar', getenv('SOME_VARIABLE'));
+        $this->assertSame('foobar', $_SERVER['SOME_VARIABLE']);
+        $this->assertSame('foobar', $_ENV['SOME_VARIABLE']);
+
+        // Check value from Secrets Manager
+        $this->assertSame('foobar', getenv('SOME_VARIABLE_1'));
+        $this->assertSame('foobar', $_SERVER['SOME_VARIABLE_1']);
+        $this->assertSame('foobar', $_ENV['SOME_VARIABLE_1']);
+
+        // Check that the other variable was not modified
+        $this->assertSame('helloworld', getenv('SOME_OTHER_VARIABLE'));
+    }
+
     public function test caches parameters to call SSM only once(): void
     {
+        // Unset this env variable to prevent calling SecretsManager client because of previous test
+        putenv('SOME_VARIABLE_1');
         putenv('SOME_VARIABLE=bref-ssm:/some/parameter');
 
         // Call twice, the mock will assert that SSM was only called once
         $ssmClient = $this->mockSsmClient();
         Secrets::loadSecretEnvironmentVariables($ssmClient);
         Secrets::loadSecretEnvironmentVariables($ssmClient);
+
+        $this->assertSame('foobar', getenv('SOME_VARIABLE'));
+    }
+
+    public function test caches parameters to call Secrets Manager only once(): void
+    {
+        // Unset this env variable to prevent calling SecretsManager client because of previous test
+        putenv('SOME_VARIABLE_1');
+        putenv('SOME_VARIABLE=bref-secretsmanager:/some/parameter');
+
+        // Call twice, the mock will assert that Secrets Manager was only called once
+        $secretsManagerClient = $this->mockSecretsManagerClient();
+        Secrets::loadSecretEnvironmentVariables(null, $secretsManagerClient);
+        Secrets::loadSecretEnvironmentVariables(null, $secretsManagerClient);
 
         $this->assertSame('foobar', getenv('SOME_VARIABLE'));
     }
@@ -62,6 +127,27 @@ class SecretsTest extends TestCase
         $expected = preg_quote("Bref was not able to resolve secrets contained in environment variables from SSM because of a permissions issue with the SSM API. Did you add IAM permissions in serverless.yml to allow Lambda to access SSM? (docs: https://bref.sh/docs/environment/variables.html#at-deployment-time).\nFull exception message:", '/');
         $this->expectExceptionMessageMatches("/$expected .+/");
         Secrets::loadSecretEnvironmentVariables($ssmClient);
+    }
+
+    private function mockSecretsManagerClient(): SecretsManagerClient
+    {
+        $secretsManagerClient = $this->getMockBuilder(SecretsManagerClient::class)
+            ->disableOriginalConstructor()
+            ->onlyMethods(['getSecretValue'])
+            ->getMock();
+
+        $result = ResultMockFactory::create(GetSecretValueResponse::class, [
+            'SecretString' => 'foobar',
+        ]);
+
+        $secretsManagerClient->expects($this->once())
+            ->method('getSecretValue')
+            ->with([
+                'SecretId' => '/some/parameter',
+            ])
+            ->willReturn($result);
+
+        return $secretsManagerClient;
     }
 
     private function mockSsmClient(): SsmClient
