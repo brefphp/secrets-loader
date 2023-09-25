@@ -19,9 +19,11 @@
         "async-aws/ssm": "^1.3"
     },
     "require-dev": {
+        "async-aws/secrets-manager": "^1.0",
         "phpunit/phpunit": "^9.6.10",
         "mnapoli/hard-mode": "^0.3.0",
-        "phpstan/phpstan": "^1.10.26"
+        "phpstan/phpstan": "^1.10.26",
+        "symfony/polyfill-uuid": "^1.13.1"
     },
     "config": {
         "allow-plugins": {
