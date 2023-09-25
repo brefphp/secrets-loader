@@ -87,8 +87,6 @@ class SecretsTest extends TestCase
 
     public function test caches parameters to call SSM only once(): void
     {
-        // Unset this env variable to prevent calling SecretsManager client because of previous test
-        putenv('SOME_VARIABLE_1');
         putenv('SOME_VARIABLE=bref-ssm:/some/parameter');
 
         // Call twice, the mock will assert that SSM was only called once
@@ -101,8 +99,6 @@ class SecretsTest extends TestCase
 
     public function test caches parameters to call Secrets Manager only once(): void
     {
-        // Unset this env variable to prevent calling SecretsManager client because of previous test
-        putenv('SOME_VARIABLE_1');
         putenv('SOME_VARIABLE=bref-secretsmanager:/some/parameter');
 
         // Call twice, the mock will assert that Secrets Manager was only called once
