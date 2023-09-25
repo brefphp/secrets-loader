@@ -37,7 +37,7 @@ class Secrets
         $ssmNames = [];
         $secretsManagerNames = [];
 
-        // Extract the SSM and SecretsManager parameter names by removing the prefixes
+        // Extract the SSM and Secrets Manager parameter names by removing the prefixes
         foreach ($envVarsToDecrypt as $key => $envVar) {
             if (str_starts_with($envVar, 'bref-ssm:')) {
                 $ssmNames[$key] = substr($envVar, strlen('bref-ssm:'));
@@ -91,7 +91,7 @@ class Secrets
      * Cache the parameters in a temp file.
      * Why? Because on the function runtime, the PHP process might
      * restart on every invocation (or on error), so we don't want to
-     * call SSM/SecretsManager every time.
+     * call SSM/Secrets Manager every time.
      *
      * @param Closure(): array<string, string> $paramResolver
      * @return array<string, string> Map of parameter name -> value
@@ -158,7 +158,7 @@ class Secrets
             });
 
             throw new RuntimeException(
-                'The following SecretsManager parameters could not be found: ' . implode(', ', $parametersNotFound) .'. Did you add IAM permissions in serverless.yml to allow Lambda to access SecretsManager?',
+                'The following secrets from Secrets Manager could not be found: ' . implode(', ', $parametersNotFound) .'. Did you add IAM permissions in serverless.yml to allow Lambda to access Secrets Manager?',
             );
         }
 
