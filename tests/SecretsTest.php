@@ -41,13 +41,29 @@ class SecretsTest extends TestCase
         $this->assertSame('helloworld', getenv('SOME_OTHER_VARIABLE'));
     }
 
-    public function test decrypts env variables from secretsmanager(): void
+    public function test decrypts env variables from secretsmanager not json(): void
     {
         putenv('SOME_VARIABLE=bref-secretsmanager:/some/parameter');
         putenv('SOME_OTHER_VARIABLE=helloworld');
 
         // Sanity checks
         $this->assertSame('bref-secretsmanager:/some/parameter', getenv('SOME_VARIABLE'));
+        $this->assertSame('helloworld', getenv('SOME_OTHER_VARIABLE'));
+
+        Secrets::loadSecretEnvironmentVariables(null, $this->mockSecretsManagerClient());
+
+        $this->assertSame('{"SOME_VARIABLE_1":"foobar_1","SOME_VARIABLE_2":"foobar_2"}', getenv('SOME_VARIABLE'));
+        // Check that the other variable was not modified
+        $this->assertSame('helloworld', getenv('SOME_OTHER_VARIABLE'));
+    }
+
+    public function test decrypts env variables from secretsmanager(): void
+    {
+        putenv('SOME_VARIABLE=bref-secretsmanager:json:/some/parameter');
+        putenv('SOME_OTHER_VARIABLE=helloworld');
+
+        // Sanity checks
+        $this->assertSame('bref-secretsmanager:json:/some/parameter', getenv('SOME_VARIABLE'));
         $this->assertSame('helloworld', getenv('SOME_OTHER_VARIABLE'));
 
         Secrets::loadSecretEnvironmentVariables(null, $this->mockSecretsManagerClient());
@@ -65,12 +81,12 @@ class SecretsTest extends TestCase
     public function test decrypts env variables from both ssm and secretsmanager(): void
     {
         putenv('SOME_VARIABLE=bref-ssm:/some/parameter');
-        putenv('SOME_VARIABLE_1=bref-secretsmanager:/some/parameter');
+        putenv('SOME_VARIABLE_1=bref-secretsmanager:json:/some/parameter');
         putenv('SOME_OTHER_VARIABLE=helloworld');
 
         // Sanity checks
         $this->assertSame('bref-ssm:/some/parameter', getenv('SOME_VARIABLE'));
-        $this->assertSame('bref-secretsmanager:/some/parameter', getenv('SOME_VARIABLE_1'));
+        $this->assertSame('bref-secretsmanager:json:/some/parameter', getenv('SOME_VARIABLE_1'));
         $this->assertSame('helloworld', getenv('SOME_OTHER_VARIABLE'));
 
         Secrets::loadSecretEnvironmentVariables($this->mockSsmClient(), $this->mockSecretsManagerClient());
@@ -93,12 +109,12 @@ class SecretsTest extends TestCase
     public function test env variables from secretsmanager overrides ssm(): void
     {
         putenv('SOME_VARIABLE=bref-ssm:/some/parameter');
-        putenv('SOME_VARIABLE_1=bref-secretsmanager:/some/parameter');
+        putenv('SOME_VARIABLE_1=bref-secretsmanager:json:/some/parameter');
         putenv('SOME_OTHER_VARIABLE=helloworld');
 
         // Sanity checks
         $this->assertSame('bref-ssm:/some/parameter', getenv('SOME_VARIABLE'));
-        $this->assertSame('bref-secretsmanager:/some/parameter', getenv('SOME_VARIABLE_1'));
+        $this->assertSame('bref-secretsmanager:json:/some/parameter', getenv('SOME_VARIABLE_1'));
         $this->assertSame('helloworld', getenv('SOME_OTHER_VARIABLE'));
 
         Secrets::loadSecretEnvironmentVariables(

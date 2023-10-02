@@ -131,7 +131,14 @@ class Secrets
         /** @var array<string, string> $parameters Map of parameter name -> value */
         $parameters = [];
 
-        foreach ($secretNames as $secretId) {
+        foreach ($secretNames as $originalEnvVar => $secretId) {
+            $isJson = false;
+
+            if (str_starts_with($secretId, 'json:')) {
+                $isJson = true;
+                $secretId = substr($secretId, strlen('json:'));
+            }
+
             try {
                 $result = $secretsManager->getSecretValue([
                     'SecretId' => $secretId,
@@ -149,6 +156,14 @@ class Secrets
                 throw $e;
             }
 
+            // If json processor not set, replace original env var with secretString value
+            if ($isJson === false) {
+                $parameters[$originalEnvVar] = $secretString;
+
+                continue;
+            }
+
+            // Otherwise JSON decode secretString and add parameters from decoded array
             $secretValues = json_decode($secretString, true, 512, JSON_THROW_ON_ERROR);
             foreach ($secretValues as $name => $value) {
                 $parameters[$name] = $value;
