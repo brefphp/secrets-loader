@@ -50,7 +50,7 @@ class SecretsTest extends TestCase
 
     public function test that parameter can have a default value(): void
     {
-        putenv('SOME_VARIABLE_WITH_DEFAULT=bref-ssm:/some/undefined-parameter;default-value');
+        putenv('SOME_VARIABLE_WITH_DEFAULT=bref-ssm:/some/undefined-parameter,default-value');
 
         $ssmClient = $this->getMockBuilder(SsmClient::class)
             ->disableOriginalConstructor()

@@ -43,7 +43,7 @@ class Secrets
         });
 
         // Remove default values from parameter names
-        $ssmNames = array_map(static fn($name) => explode(';', $name, 2)[0], $ssmNames);
+        $ssmNames = array_map(static fn($name) => explode(',', $name, 2)[0], $ssmNames);
 
         foreach ($parameters as $parameterName => $parameterValue) {
             $envVar = array_search($parameterName, $ssmNames, true);
@@ -104,14 +104,14 @@ class Secrets
         $parametersNotFound = [];
         // Store default values for parameters
         $parametersDefaults = array_reduce($ssmNames, static function ($carry, $item) {
-            [ $paramName, $defaultValue ] = explode(';', $item) + [ null, null ];
+            [ $paramName, $defaultValue ] = explode(',', $item) + [ null, null ];
 
             return $paramName !== null && $defaultValue !== null
                 ? array_merge($carry, [ $paramName => $defaultValue ])
                 : $carry;
         }, []);
         // Remove default values from parameter names for querying SSM
-        $ssmNames = array_map(static fn($name) => explode(';', $name, 2)[0], $ssmNames);
+        $ssmNames = array_map(static fn($name) => explode(',', $name, 2)[0], $ssmNames);
 
         // The API only accepts up to 10 parameters at a time, so we batch the calls
         foreach (array_chunk($ssmNames, 10) as $batchOfSsmNames) {
