@@ -42,8 +42,9 @@ class Secrets
             return self::retrieveParametersFromSsm($ssmClient, array_values($ssmNames));
         });
 
-        foreach ($parameters as $parameterName => $parameterValue) {
-            $envVar = array_search($parameterName, $ssmNames, true);
+        foreach ($envVarsToDecrypt as $envVar => $prefixedSsmRefName) {
+            $parameterName = substr($prefixedSsmRefName, strlen('bref-ssm:'));
+            $parameterValue = $parameters[$parameterName];
             $_SERVER[$envVar] = $_ENV[$envVar] = $parameterValue;
             putenv("$envVar=$parameterValue");
         }
