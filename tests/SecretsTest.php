@@ -16,6 +16,9 @@ class SecretsTest extends TestCase
         if (file_exists(sys_get_temp_dir() . '/bref-ssm-parameters.php')) {
             unlink(sys_get_temp_dir() . '/bref-ssm-parameters.php');
         }
+        if (file_exists(sys_get_temp_dir() . '/bref-ssm-parameters-store.ini')) {
+            unlink(sys_get_temp_dir() . '/bref-ssm-parameters-store.ini');
+        }
         putenv('SOME_VARIABLE');
         putenv('SOME_OTHER_VARIABLE');
         putenv(Secrets::PARAMETER_STORE_VAR_NAME);
@@ -37,6 +40,18 @@ class SecretsTest extends TestCase
         $this->asserVarIsSet('foobar', 'SOME_VARIABLE');
         // Check that the other variable was not modified
         $this->assertSame('helloworld', getenv('SOME_OTHER_VARIABLE'));
+    }
+
+    public function test caches parameters to call SSM only once(): void
+    {
+        putenv('SOME_VARIABLE=bref-ssm:/some/parameter');
+
+        // Call twice, the mock will assert that SSM was only called once
+        $ssmClient = $this->mockSsmClient();
+        Secrets::loadSecretEnvironmentVariables($ssmClient);
+        Secrets::loadSecretEnvironmentVariables($ssmClient);
+
+        $this->assertSame('foobar', getenv('SOME_VARIABLE'));
     }
 
     public function test decrypts env variables from parameter store(): void
@@ -62,25 +77,25 @@ class SecretsTest extends TestCase
         $this->assertSame('helloworld', getenv('SOME_OTHER_VARIABLE'));
     }
 
-    public function test caches parameters to call SSM only once(): void
-    {
-        putenv('SOME_VARIABLE=bref-ssm:/some/parameter');
-
-        // Call twice, the mock will assert that SSM was only called once
-        $ssmClient = $this->mockSsmClient();
-        Secrets::loadSecretEnvironmentVariables($ssmClient);
-        Secrets::loadSecretEnvironmentVariables($ssmClient);
-
-        $this->assertSame('foobar', getenv('SOME_VARIABLE'));
-    }
-
     public function test caches parameters from parameter store to call SSM only once(): void
     {
         putenv(Secrets::PARAMETER_STORE_VAR_NAME.'=ssm:/some/parameter');
+        putenv('SOME_OTHER_VARIABLE=helloworld');
+
+        // Sanity checks
+        $this->assertSame('ssm:/some/parameter', getenv('BREF_PARAMETER_STORE'));
+        $this->assertSame('helloworld', getenv('SOME_OTHER_VARIABLE'));
+
+        $storeContents=<<<'END'
+        FOO=bar
+        BAR=baz
+        END;
 
         // Call twice, the mock will assert that SSM was only called once
-        $ssmClient = $this->mockSsmClient();
+        $ssmClient = $this->mockSsmClient($storeContents);
         Secrets::loadSecretEnvironmentVariables($ssmClient);
+        putenv('FOO');
+        putenv('BAR');
         Secrets::loadSecretEnvironmentVariables($ssmClient);
 
         $this->asserVarIsSet('bar', 'FOO');
