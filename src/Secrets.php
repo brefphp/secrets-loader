@@ -25,8 +25,12 @@ class Secrets
             return;
         }
 
-        if (\key_exists(self::PARAMETER_STORE_VAR_NAME, $envVars)) {
-            self::readEnvFromCacheOrParameterStore($envVars[self::PARAMETER_STORE_VAR_NAME], $ssmClient);
+        if (\array_key_exists(self::PARAMETER_STORE_VAR_NAME, $envVars)) {
+            $parameterStoreName = $envVars[self::PARAMETER_STORE_VAR_NAME];
+            $actuallyCalledSsm = self::readEnvFromCacheOrParameterStore($parameterStoreName, $ssmClient);
+            if ($actuallyCalledSsm) {
+                self::logToStderr('[Bref] Loaded environment variables from SSM parameter store ' . $parameterStoreName);
+            }
         }
 
         // Only consider environment variables that start with "bref-ssm:"
@@ -56,8 +60,8 @@ class Secrets
         // Only log once (when the cache was empty) else it might spam the logs in the function runtime
         // (where the process restarts on every invocation)
         if ($actuallyCalledSsm) {
-            $stderr = fopen('php://stderr', 'ab');
-            fwrite($stderr, '[Bref] Loaded these environment variables from SSM: ' . implode(', ', array_keys($envVarsToDecrypt)) . PHP_EOL);
+            $message = '[Bref] Loaded these environment variables from SSM: ' . implode(', ', array_keys($envVarsToDecrypt));
+            self::logToStderr($message);
         }
     }
 
@@ -137,10 +141,17 @@ class Secrets
     }
 
     /**
-     * @param string $parameterValue
-     * @param bool|int|string $envVar
-     * @return void
+     * This method logs to stderr.
+     *
+     * It must only be used in a lambda environment since all error output will be logged.
+     *
+     * @param string $message The message to log
      */
+    private static function logToStderr(string $message): void
+    {
+        file_put_contents('php://stderr', date('[c] ') . $message . PHP_EOL, FILE_APPEND);
+    }
+
     private static function setIniValue(string $parameterValue, bool|int|string $envVar): void
     {
         $_SERVER[$envVar] = $_ENV[$envVar] = $parameterValue;
@@ -152,13 +163,13 @@ class Secrets
         $cacheFile = sys_get_temp_dir() . '/bref-ssm-parameters-store.ini';
         if (is_file($cacheFile)) {
             $values = parse_ini_file($cacheFile);
-            if (false === $values) {
+            if ($values === false) {
                 throw new \RuntimeException('Error parsing data from parameter store');
             }
             $actuallyCalledSsm = false;
         } else {
             $values = self::readEnvFromParameterStore($parameterStoreName, $ssmClient);
-            self::write_to_ini($cacheFile, $values);
+            self::writeToIni($cacheFile, $values);
             $actuallyCalledSsm = true;
         }
 
@@ -169,6 +180,11 @@ class Secrets
         return $actuallyCalledSsm;
     }
 
+    /**
+     * @param string $parameterStoreName Name of the ssn variable that stores env var in ini format
+     * @param SsmClient|null $ssmClient Client to use. If null it will be created, otherwise it's probably a mock for tests
+     * @return array<string, string> Map of parameter name -> value
+     */
     private static function readEnvFromParameterStore(string $parameterStoreName, ?SsmClient $ssmClient): array
     {
         // The ssm: prefix will allow to implement a secretsmanager: prefix in the future
@@ -177,14 +193,19 @@ class Secrets
         $iniValues = self::retrieveParametersFromSsm($ssmClient, [$cleanParameterStoreName])[$cleanParameterStoreName];
 
         $values = parse_ini_string($iniValues);
-        if (false === $values) {
+        if ($values === false) {
             throw new \RuntimeException('Error parsing data from parameter store');
         }
 
         return $values;
     }
 
-    private static function write_to_ini(string $fileName, array $values): void {
+    /**
+     * @param string $fileName Name of the file where to store values
+     * @param array<string, string> $values Map of parameter name -> value
+     */
+    private static function writeToIni(string $fileName, array $values): void
+    {
         $content = '';
         foreach ($values as $key => $value) {
             $content .= "$key = $value" . PHP_EOL;

@@ -56,14 +56,14 @@ class SecretsTest extends TestCase
 
     public function test decrypts env variables from parameter store(): void
     {
-        putenv(Secrets::PARAMETER_STORE_VAR_NAME.'=ssm:/some/parameter');
+        putenv(Secrets::PARAMETER_STORE_VAR_NAME . '=ssm:/some/parameter');
         putenv('SOME_OTHER_VARIABLE=helloworld');
 
         // Sanity checks
         $this->assertSame('ssm:/some/parameter', getenv('BREF_PARAMETER_STORE'));
         $this->assertSame('helloworld', getenv('SOME_OTHER_VARIABLE'));
 
-        $storeContents=<<<'END'
+        $storeContents = <<<'END'
         FOO=bar
         BAR=baz
         END;
@@ -79,14 +79,14 @@ class SecretsTest extends TestCase
 
     public function test caches parameters from parameter store to call SSM only once(): void
     {
-        putenv(Secrets::PARAMETER_STORE_VAR_NAME.'=ssm:/some/parameter');
+        putenv(Secrets::PARAMETER_STORE_VAR_NAME . '=ssm:/some/parameter');
         putenv('SOME_OTHER_VARIABLE=helloworld');
 
         // Sanity checks
         $this->assertSame('ssm:/some/parameter', getenv('BREF_PARAMETER_STORE'));
         $this->assertSame('helloworld', getenv('SOME_OTHER_VARIABLE'));
 
-        $storeContents=<<<'END'
+        $storeContents = <<<'END'
         FOO=bar
         BAR=baz
         END;
