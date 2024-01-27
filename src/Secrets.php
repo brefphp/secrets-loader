@@ -9,6 +9,8 @@ use RuntimeException;
 
 class Secrets
 {
+    public const PARAMETER_STORE_VAR_NAME = 'BREF_PARAMETER_STORE';
+
     /**
      * Decrypt environment variables that are encrypted with AWS SSM.
      *
@@ -21,6 +23,10 @@ class Secrets
         $envVars = getenv(local_only: true); // @phpstan-ignore-line PHPStan is wrong
         if (! is_array($envVars)) {
             return;
+        }
+
+        if (\key_exists(self::PARAMETER_STORE_VAR_NAME, $envVars)) {
+            self::readEnvFromParameterStore($envVars[self::PARAMETER_STORE_VAR_NAME], $ssmClient);
         }
 
         // Only consider environment variables that start with "bref-ssm:"
@@ -44,8 +50,7 @@ class Secrets
 
         foreach ($parameters as $parameterName => $parameterValue) {
             $envVar = array_search($parameterName, $ssmNames, true);
-            $_SERVER[$envVar] = $_ENV[$envVar] = $parameterValue;
-            putenv("$envVar=$parameterValue");
+            self::setIniValue($parameterValue, $envVar);
         }
 
         // Only log once (when the cache was empty) else it might spam the logs in the function runtime
@@ -129,5 +134,33 @@ class Secrets
         }
 
         return $parameters;
+    }
+
+    /**
+     * @param string $parameterValue
+     * @param bool|int|string $envVar
+     * @return void
+     */
+    public static function setIniValue(string $parameterValue, bool|int|string $envVar): void
+    {
+        $_SERVER[$envVar] = $_ENV[$envVar] = $parameterValue;
+        putenv("$envVar=$parameterValue");
+    }
+
+    private static function readEnvFromParameterStore(string $parameterStoreName, ?SsmClient $ssmClient): void
+    {
+        // The ssm: prefix will allow to implement a secretsmanager prefix in the future
+        $cleanParameterStoreName = substr($parameterStoreName, strlen('ssm:'));
+
+        $iniValues = self::retrieveParametersFromSsm($ssmClient, [$cleanParameterStoreName])[$cleanParameterStoreName];
+
+        $values = parse_ini_string($iniValues);
+        if (false === $values) {
+            throw new \RuntimeException('Error parsing data from parameter store');
+        }
+
+        foreach ($values as $key => $value) {
+            self::setIniValue($value, $key);
+        }
     }
 }
