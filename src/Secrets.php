@@ -163,7 +163,7 @@ class Secrets
      *  VAR1=foo
      *  VAR2=bar
      *
-     * @param string$parameterStoreName The name of the SSM variable containing the ini formatted string
+     * @param string$parameterStoreName The name of the SSM parameter containing the ini formatted string
      * @param SsmClient|null $ssmClient To allow mocking in tests.
      * @throws JsonException
      */
