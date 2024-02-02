@@ -158,18 +158,27 @@ class Secrets
         putenv("$envVar=$parameterValue");
     }
 
+    /**
+     *  Decrypt environment variables that are saved in AWS SSM as a string in an .ini format, i.e.
+     *  VAR1=foo
+     *  VAR2=bar
+     *
+     * @param string$parameterStoreName The name of the SSM variable containing the ini formatted string
+     * @param SsmClient|null $ssmClient To allow mocking in tests.
+     * @throws JsonException
+     */
     private static function readEnvFromCacheOrParameterStore(string $parameterStoreName, ?SsmClient $ssmClient): bool
     {
-        $cacheFile = sys_get_temp_dir() . '/bref-ssm-parameters-store.ini';
+        $cacheFile = sys_get_temp_dir() . '/bref-ssm-parameters-store.json';
         if (is_file($cacheFile)) {
-            $values = parse_ini_file($cacheFile);
+            $values = json_decode(file_get_contents($cacheFile), true, 512, JSON_THROW_ON_ERROR);
             if ($values === false) {
                 throw new \RuntimeException('Error parsing data from parameter store');
             }
             $actuallyCalledSsm = false;
         } else {
             $values = self::readEnvFromParameterStore($parameterStoreName, $ssmClient);
-            self::writeToIni($cacheFile, $values);
+            file_put_contents($cacheFile, json_encode($values, JSON_THROW_ON_ERROR));
             $actuallyCalledSsm = true;
         }
 
@@ -198,19 +207,5 @@ class Secrets
         }
 
         return $values;
-    }
-
-    /**
-     * @param string $fileName Name of the file where to store values
-     * @param array<string, string> $values Map of parameter name -> value
-     */
-    private static function writeToIni(string $fileName, array $values): void
-    {
-        $content = '';
-        foreach ($values as $key => $value) {
-            $content .= "$key = $value" . PHP_EOL;
-        }
-
-        file_put_contents($fileName, $content, FILE_APPEND) !== false;
     }
 }
