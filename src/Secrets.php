@@ -9,6 +9,8 @@ use RuntimeException;
 
 class Secrets
 {
+    public const PARAMETER_STORE_VAR_NAME = 'BREF_PARAMETER_STORE';
+
     /**
      * Decrypt environment variables that are encrypted with AWS SSM.
      *
@@ -21,6 +23,14 @@ class Secrets
         $envVars = getenv(local_only: true); // @phpstan-ignore-line PHPStan is wrong
         if (! is_array($envVars)) {
             return;
+        }
+
+        if (\array_key_exists(self::PARAMETER_STORE_VAR_NAME, $envVars)) {
+            $parameterStoreName = $envVars[self::PARAMETER_STORE_VAR_NAME];
+            $actuallyCalledSsm = self::readEnvFromCacheOrParameterStore($parameterStoreName, $ssmClient);
+            if ($actuallyCalledSsm) {
+                self::logToStderr('[Bref] Loaded environment variables from SSM parameter store ' . $parameterStoreName);
+            }
         }
 
         // Only consider environment variables that start with "bref-ssm:"
@@ -44,15 +54,14 @@ class Secrets
 
         foreach ($parameters as $parameterName => $parameterValue) {
             $envVar = array_search($parameterName, $ssmNames, true);
-            $_SERVER[$envVar] = $_ENV[$envVar] = $parameterValue;
-            putenv("$envVar=$parameterValue");
+            self::setIniValue($parameterValue, $envVar);
         }
 
         // Only log once (when the cache was empty) else it might spam the logs in the function runtime
         // (where the process restarts on every invocation)
         if ($actuallyCalledSsm) {
-            $stderr = fopen('php://stderr', 'ab');
-            fwrite($stderr, '[Bref] Loaded these environment variables from SSM: ' . implode(', ', array_keys($envVarsToDecrypt)) . PHP_EOL);
+            $message = '[Bref] Loaded these environment variables from SSM: ' . implode(', ', array_keys($envVarsToDecrypt));
+            self::logToStderr($message);
         }
     }
 
@@ -129,5 +138,74 @@ class Secrets
         }
 
         return $parameters;
+    }
+
+    /**
+     * This method logs to stderr.
+     *
+     * It must only be used in a lambda environment since all error output will be logged.
+     *
+     * @param string $message The message to log
+     */
+    private static function logToStderr(string $message): void
+    {
+        file_put_contents('php://stderr', date('[c] ') . $message . PHP_EOL, FILE_APPEND);
+    }
+
+    private static function setIniValue(string $parameterValue, bool|int|string $envVar): void
+    {
+        $_SERVER[$envVar] = $_ENV[$envVar] = $parameterValue;
+        putenv("$envVar=$parameterValue");
+    }
+
+    /**
+     *  Decrypt environment variables that are saved in AWS SSM as a string in an .ini format, i.e.
+     *  VAR1=foo
+     *  VAR2=bar
+     *
+     * @param string$parameterStoreName The name of the SSM parameter containing the ini formatted string
+     * @param SsmClient|null $ssmClient To allow mocking in tests.
+     * @throws JsonException
+     */
+    private static function readEnvFromCacheOrParameterStore(string $parameterStoreName, ?SsmClient $ssmClient): bool
+    {
+        $cacheFile = sys_get_temp_dir() . '/bref-ssm-parameters-store.json';
+        if (is_file($cacheFile)) {
+            $values = json_decode(file_get_contents($cacheFile), true, 512, JSON_THROW_ON_ERROR);
+            if ($values === false) {
+                throw new \RuntimeException('Error parsing data from parameter store');
+            }
+            $actuallyCalledSsm = false;
+        } else {
+            $values = self::readEnvFromParameterStore($parameterStoreName, $ssmClient);
+            file_put_contents($cacheFile, json_encode($values, JSON_THROW_ON_ERROR));
+            $actuallyCalledSsm = true;
+        }
+
+        foreach ($values as $key => $value) {
+            self::setIniValue($value, $key);
+        }
+
+        return $actuallyCalledSsm;
+    }
+
+    /**
+     * @param string $parameterStoreName Name of the ssn variable that stores env var in ini format
+     * @param SsmClient|null $ssmClient Client to use. If null it will be created, otherwise it's probably a mock for tests
+     * @return array<string, string> Map of parameter name -> value
+     */
+    private static function readEnvFromParameterStore(string $parameterStoreName, ?SsmClient $ssmClient): array
+    {
+        // The ssm: prefix will allow to implement a secretsmanager: prefix in the future
+        $cleanParameterStoreName = substr($parameterStoreName, strlen('ssm:'));
+
+        $iniValues = self::retrieveParametersFromSsm($ssmClient, [$cleanParameterStoreName])[$cleanParameterStoreName];
+
+        $values = parse_ini_string($iniValues);
+        if ($values === false) {
+            throw new \RuntimeException('Error parsing data from parameter store');
+        }
+
+        return $values;
     }
 }

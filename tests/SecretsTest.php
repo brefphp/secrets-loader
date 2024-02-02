@@ -16,6 +16,14 @@ class SecretsTest extends TestCase
         if (file_exists(sys_get_temp_dir() . '/bref-ssm-parameters.php')) {
             unlink(sys_get_temp_dir() . '/bref-ssm-parameters.php');
         }
+        if (file_exists(sys_get_temp_dir() . '/bref-ssm-parameters-store.json')) {
+            unlink(sys_get_temp_dir() . '/bref-ssm-parameters-store.json');
+        }
+        putenv('SOME_VARIABLE');
+        putenv('SOME_OTHER_VARIABLE');
+        putenv(Secrets::PARAMETER_STORE_VAR_NAME);
+        putenv('FOO');
+        putenv('BAR');
     }
 
     public function test decrypts env variables(): void
@@ -29,9 +37,7 @@ class SecretsTest extends TestCase
 
         Secrets::loadSecretEnvironmentVariables($this->mockSsmClient());
 
-        $this->assertSame('foobar', getenv('SOME_VARIABLE'));
-        $this->assertSame('foobar', $_SERVER['SOME_VARIABLE']);
-        $this->assertSame('foobar', $_ENV['SOME_VARIABLE']);
+        $this->asserVarIsSet('foobar', 'SOME_VARIABLE');
         // Check that the other variable was not modified
         $this->assertSame('helloworld', getenv('SOME_OTHER_VARIABLE'));
     }
@@ -46,6 +52,54 @@ class SecretsTest extends TestCase
         Secrets::loadSecretEnvironmentVariables($ssmClient);
 
         $this->assertSame('foobar', getenv('SOME_VARIABLE'));
+    }
+
+    public function test decrypts env variables from parameter store(): void
+    {
+        putenv(Secrets::PARAMETER_STORE_VAR_NAME . '=ssm:/some/parameter');
+        putenv('SOME_OTHER_VARIABLE=helloworld');
+
+        // Sanity checks
+        $this->assertSame('ssm:/some/parameter', getenv('BREF_PARAMETER_STORE'));
+        $this->assertSame('helloworld', getenv('SOME_OTHER_VARIABLE'));
+
+        $storeContents = <<<'END'
+        FOO=bar
+        BAR=baz
+        END;
+
+        Secrets::loadSecretEnvironmentVariables($this->mockSsmClient($storeContents));
+
+        $this->asserVarIsSet('bar', 'FOO');
+        $this->asserVarIsSet('baz', 'BAR');
+
+        // Check that the other variable was not modified
+        $this->assertSame('helloworld', getenv('SOME_OTHER_VARIABLE'));
+    }
+
+    public function test caches parameters from parameter store to call SSM only once(): void
+    {
+        putenv(Secrets::PARAMETER_STORE_VAR_NAME . '=ssm:/some/parameter');
+        putenv('SOME_OTHER_VARIABLE=helloworld');
+
+        // Sanity checks
+        $this->assertSame('ssm:/some/parameter', getenv('BREF_PARAMETER_STORE'));
+        $this->assertSame('helloworld', getenv('SOME_OTHER_VARIABLE'));
+
+        $storeContents = <<<'END'
+        FOO=bar
+        BAR=baz
+        END;
+
+        // Call twice, the mock will assert that SSM was only called once
+        $ssmClient = $this->mockSsmClient($storeContents);
+        Secrets::loadSecretEnvironmentVariables($ssmClient);
+        putenv('FOO');
+        putenv('BAR');
+        Secrets::loadSecretEnvironmentVariables($ssmClient);
+
+        $this->asserVarIsSet('bar', 'FOO');
+        $this->asserVarIsSet('baz', 'BAR');
     }
 
     public function test throws a clear error message on missing permissions(): void
@@ -64,7 +118,7 @@ class SecretsTest extends TestCase
         Secrets::loadSecretEnvironmentVariables($ssmClient);
     }
 
-    private function mockSsmClient(): SsmClient
+    private function mockSsmClient(string $parameterValue = 'foobar'): SsmClient
     {
         $ssmClient = $this->getMockBuilder(SsmClient::class)
             ->disableOriginalConstructor()
@@ -75,7 +129,7 @@ class SecretsTest extends TestCase
             'Parameters' => [
                 new Parameter([
                     'Name' => '/some/parameter',
-                    'Value' => 'foobar',
+                    'Value' => $parameterValue,
                 ]),
             ],
         ]);
@@ -89,5 +143,12 @@ class SecretsTest extends TestCase
             ->willReturn($result);
 
         return $ssmClient;
+    }
+
+    private function asserVarIsSet(string $value, string $varName): void
+    {
+        $this->assertSame($value, getenv($varName));
+        $this->assertSame($value, $_SERVER[$varName]);
+        $this->assertSame($value, $_ENV[$varName]);
     }
 }
