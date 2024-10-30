@@ -4,6 +4,7 @@ namespace Bref\Secrets;
 
 use AsyncAws\Ssm\SsmClient;
 use Closure;
+use Dotenv\Dotenv;
 use JsonException;
 use RuntimeException;
 
@@ -17,11 +18,7 @@ class Secrets
      */
     public static function loadSecretEnvironmentVariables(?SsmClient $ssmClient = null): void
     {
-        /** @var array<string,string>|string|false $envVars */
-        $envVars = getenv(local_only: true); // @phpstan-ignore-line PHPStan is wrong
-        if (! is_array($envVars)) {
-            return;
-        }
+        $envVars = self::getEnvVars();
 
         // Only consider environment variables that start with "bref-ssm:"
         $envVarsToDecrypt = array_filter($envVars, function (string $value): bool {
@@ -129,5 +126,38 @@ class Secrets
         }
 
         return $parameters;
+    }
+
+    private static function getEnvironment(): ?string
+    {
+        if ($environment = getenv('BREF_ENV')){
+            return $environment;
+        }
+        return getenv('APP_ENV') ?: null;
+    }
+
+    private static function getEnvironmentPath(): ?string
+    {
+        if ($environment = getenv('BREF_ENV_PATH')){
+            return $environment;
+        }
+        return getenv('LAMBDA_TASK_ROOT') ?: getcwd();
+    }
+
+    private static function getEnvFile(): string
+    {
+        $env = self::getEnvironment();
+        return $env ? ".env.{$env}" : '.env';
+    }
+
+    private static function getEnvVars(): array
+    {
+        $env = getenv(null, true);
+        return array_merge(
+            is_array($env) ? $env : [],
+            Dotenv::createUnsafeImmutable(
+                self::getEnvironmentPath(),
+                self::getEnvFile()
+            )->safeLoad());
     }
 }
