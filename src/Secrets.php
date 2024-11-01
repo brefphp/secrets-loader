@@ -147,7 +147,8 @@ class Secrets
     private static function getEnvFile(): string
     {
         $env = self::getEnvironment();
-        return $env ? ".env.{$env}" : '.env';
+        $envFilePath = self::getEnvironmentPath()."/.env.{$env}";
+        return $env && file_exists($envFilePath) ? ".env.{$env}" : '.env';
     }
 
     private static function getEnvVars(): array

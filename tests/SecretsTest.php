@@ -114,10 +114,29 @@ class SecretsTest extends TestCase
         Secrets::loadSecretEnvironmentVariables($ssmClient);
     }
 
-
-    public function testLoadsSecretsFromDotenv(): void
+    /**
+     * @testWith [null, null]
+     *           ["BREF_ENV_PATH", null]
+     *           ["LAMBDA_TASK_ROOT", null]
+     *           [null, "BREF_ENV"]
+     *           [null, "APP_ENV"]
+     *           ["BREF_ENV_PATH", "BREF_ENV"]
+     *           ["LAMBDA_TASK_ROOT", "APP_ENV"]
+     */
+    public function testLoadsSecretsFromDotenv(?string $envPath, ?string $envKey): void
     {
-        copy(__DIR__ . '/fixtures/.env', getcwd() . '/.env');
+
+        if ($envPath) {
+            putenv("$envPath=" . __DIR__ . '/env');
+            mkdir( __DIR__ . '/env');
+        }
+        $envPath = $envPath ? __DIR__ . '/env' : getcwd();
+        copy(__DIR__ . '/fixtures/.env', "$envPath/.env");
+
+        if($envKey) {
+            putenv("$envKey=foobar");
+        }
+
         putenv('SOME_VARIABLE');
         putenv('SOME_OTHER_VARIABLE=helloworld');
 
@@ -146,10 +165,10 @@ class SecretsTest extends TestCase
     {
         if ($envPath) {
             putenv("$envPath=" . __DIR__ . '/env');
+            mkdir( __DIR__ . '/env');
         }
 
         $envPath = $envPath ? __DIR__ . '/env' : getcwd();
-        mkdir( __DIR__ . '/env');
         copy(__DIR__ . '/fixtures/.env', "$envPath/.env.foobar");
         putenv('SOME_VARIABLE');
         putenv("$envKey=foobar");
