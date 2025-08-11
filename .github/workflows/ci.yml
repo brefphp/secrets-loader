@@ -14,13 +14,13 @@ jobs:
         timeout-minutes: 15
         strategy:
             matrix:
-                php: [ '8.0', '8.1', '8.2', '8.3' ]
+                php: [ '8.0', '8.1', '8.2', '8.3', '8.4', '8.5' ]
                 dependency-version: [ '' ]
                 include:
                     -   php: '8.0'
                         dependency-version: '--prefer-lowest'
         steps:
-            -   uses: actions/checkout@v3
+            -   uses: actions/checkout@v4
             -   name: Setup PHP
                 uses: shivammathur/setup-php@v2
                 with:
@@ -28,7 +28,7 @@ jobs:
                     tools: composer:v2
                     coverage: none
             -   name: Cache Composer dependencies
-                uses: actions/cache@v3
+                uses: actions/cache@v4
                 with:
                     path: ~/.composer/cache
                     key: php-${{ matrix.php }}-composer-locked-${{ hashFiles('composer.lock') }}
@@ -42,7 +42,7 @@ jobs:
         name: Coding standards
         runs-on: ubuntu-latest
         steps:
-            -   uses: actions/checkout@v3
+            -   uses: actions/checkout@v4
             -   name: Setup PHP
                 uses: shivammathur/setup-php@v2
                 with:
@@ -50,7 +50,7 @@ jobs:
                     tools: composer:v2, cs2pr
                     coverage: none
             -   name: Cache Composer dependencies
-                uses: actions/cache@v3
+                uses: actions/cache@v4
                 with:
                     path: ~/.composer/cache
                     key: php-composer-locked-${{ hashFiles('composer.lock') }}
