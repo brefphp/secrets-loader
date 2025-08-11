@@ -18,7 +18,7 @@ class Secrets
     public static function loadSecretEnvironmentVariables(?SsmClient $ssmClient = null): void
     {
         /** @var array<string,string>|string|false $envVars */
-        $envVars = getenv(local_only: true); // @phpstan-ignore-line PHPStan is wrong
+        $envVars = getenv(local_only: true);
         if (! is_array($envVars)) {
             return;
         }
