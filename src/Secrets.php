@@ -2,6 +2,7 @@
 
 namespace Bref\Secrets;
 
+use AsyncAws\SecretsManager\SecretsManagerClient;
 use AsyncAws\Ssm\SsmClient;
 use Closure;
 use JsonException;
@@ -13,9 +14,10 @@ class Secrets
      * Decrypt environment variables that are encrypted with AWS SSM.
      *
      * @param SsmClient|null $ssmClient To allow mocking in tests.
+     * @param SecretsManagerClient|null $secretsManagerClient To allow mocking in tests.
      * @throws JsonException
      */
-    public static function loadSecretEnvironmentVariables(?SsmClient $ssmClient = null): void
+    public static function loadSecretEnvironmentVariables(?SsmClient $ssmClient = null, ?SecretsManagerClient $secretsManagerClient = null): void
     {
         /** @var array<string,string>|string|false $envVars */
         $envVars = getenv(local_only: true);
@@ -23,36 +25,63 @@ class Secrets
             return;
         }
 
-        // Only consider environment variables that start with "bref-ssm:"
+        // Only consider environment variables that start with "bref-ssm:" or "bref-secretsmanager:"
         $envVarsToDecrypt = array_filter($envVars, function (string $value): bool {
-            return str_starts_with($value, 'bref-ssm:');
+            return str_starts_with($value, 'bref-ssm:') || str_starts_with($value, 'bref-secretsmanager:');
         });
         if (empty($envVarsToDecrypt)) {
             return;
         }
 
-        // Extract the SSM parameter names by removing the "bref-ssm:" prefix
-        $ssmNames = array_map(function (string $value): string {
-            return substr($value, strlen('bref-ssm:'));
-        }, $envVarsToDecrypt);
+        $ssmNames = [];
+        $secretsManagerNames = [];
+
+        // Extract the SSM and SecretsManager parameter names by removing the prefixes
+        foreach ($envVarsToDecrypt as $key => $envVar) {
+            if (str_starts_with($envVar, 'bref-ssm:')) {
+                $ssmNames[$key] = substr($envVar, strlen('bref-ssm:'));
+            }
+            if (str_starts_with($envVar, 'bref-secretsmanager:')) {
+                $secretsManagerNames[$key] = substr($envVar, strlen('bref-secretsmanager:'));
+            }
+        }
+
+        if (count($secretsManagerNames) > 0 && class_exists(SecretsManagerClient::class) === false) {
+            throw new RuntimeException('In order to load secrets from SecretsManager you must install "async-aws/secrets-manager" package');
+        }
 
         $actuallyCalledSsm = false;
-        $parameters = self::readParametersFromCacheOr(function () use ($ssmClient, $ssmNames, &$actuallyCalledSsm) {
-            $actuallyCalledSsm = true;
-            return self::retrieveParametersFromSsm($ssmClient, array_values($ssmNames));
-        });
+        if (count($ssmNames) > 0) {
+            $ssmParameters = self::readParametersFromCacheOr('ssm', function () use ($ssmClient, $ssmNames, &$actuallyCalledSsm) {
+                $actuallyCalledSsm = true;
+                return self::retrieveParametersFromSsm($ssmClient, array_values($ssmNames));
+            });
 
-        foreach ($parameters as $parameterName => $parameterValue) {
-            $envVar = array_search($parameterName, $ssmNames, true);
-            $_SERVER[$envVar] = $_ENV[$envVar] = $parameterValue;
-            putenv("$envVar=$parameterValue");
+            foreach ($ssmParameters as $parameterName => $parameterValue) {
+                $envVar = array_search($parameterName, $ssmNames, true);
+                $_SERVER[$envVar] = $_ENV[$envVar] = $parameterValue;
+                putenv("$envVar=$parameterValue");
+            }
+        }
+
+        $actuallyCalledSecretsManager = false;
+        if (count($secretsManagerNames) > 0) {
+            $secretsManagerParameters = self::readParametersFromCacheOr('secretsmanager', function () use ($secretsManagerClient, $secretsManagerNames, &$actuallyCalledSecretsManager) {
+                $actuallyCalledSecretsManager = true;
+                return self::retrieveParametersFromSecretsManager($secretsManagerClient, $secretsManagerNames);
+            });
+
+            foreach ($secretsManagerParameters as $parameterName => $parameterValue) {
+                $_SERVER[$parameterName] = $_ENV[$parameterName] = $parameterValue;
+                putenv("$parameterName=$parameterValue");
+            }
         }
 
         // Only log once (when the cache was empty) else it might spam the logs in the function runtime
         // (where the process restarts on every invocation)
-        if ($actuallyCalledSsm) {
+        if ($actuallyCalledSsm || $actuallyCalledSecretsManager) {
             $stderr = fopen('php://stderr', 'ab');
-            fwrite($stderr, '[Bref] Loaded these environment variables from SSM: ' . implode(', ', array_keys($envVarsToDecrypt)) . PHP_EOL);
+            fwrite($stderr, '[Bref] Loaded these environment variables from SSM/SecretsManager: ' . implode(', ', array_keys($envVarsToDecrypt)) . PHP_EOL);
         }
     }
 
@@ -60,16 +89,16 @@ class Secrets
      * Cache the parameters in a temp file.
      * Why? Because on the function runtime, the PHP process might
      * restart on every invocation (or on error), so we don't want to
-     * call SSM every time.
+     * call SSM/SecretsManager every time.
      *
      * @param Closure(): array<string, string> $paramResolver
      * @return array<string, string> Map of parameter name -> value
      * @throws JsonException
      */
-    private static function readParametersFromCacheOr(Closure $paramResolver): array
+    private static function readParametersFromCacheOr(string $paramType, Closure $paramResolver): array
     {
         // Check in cache first
-        $cacheFile = sys_get_temp_dir() . '/bref-ssm-parameters.php';
+        $cacheFile = sprintf('%s/bref-%s-parameters.php', sys_get_temp_dir(), $paramType);
         if (is_file($cacheFile)) {
             $parameters = json_decode(file_get_contents($cacheFile), true, 512, JSON_THROW_ON_ERROR);
             if (is_array($parameters)) {
@@ -82,6 +111,64 @@ class Secrets
 
         // Using json_encode instead of var_export due to possible security issues
         file_put_contents($cacheFile, json_encode($parameters, JSON_THROW_ON_ERROR));
+
+        return $parameters;
+    }
+
+    /**
+     * @param string[] $secretNames
+     * @return array<string, string> Map of parameter name -> value
+     * @throws JsonException
+     */
+    private static function retrieveParametersFromSecretsManager(
+        ?SecretsManagerClient $secretsManagerClient,
+        array $secretNames
+    ): array {
+        $secretsManager = $secretsManagerClient ?? new SecretsManagerClient([
+            'region' => $_ENV['AWS_REGION'] ?? $_ENV['AWS_DEFAULT_REGION'],
+        ]);
+
+        /** @var array<string, string> $parameters Map of parameter name -> value */
+        $parameters = [];
+
+        foreach ($secretNames as $originalEnvVar => $secretId) {
+            $isJson = false;
+
+            if (str_starts_with($secretId, 'json:')) {
+                $isJson = true;
+                $secretId = substr($secretId, strlen('json:'));
+            }
+
+            try {
+                $result = $secretsManager->getSecretValue([
+                    'SecretId' => $secretId,
+                ]);
+                $secretString = $result->getSecretString();
+            } catch (RuntimeException $e) {
+                if ($e->getCode() === 400) {
+                    // Extra descriptive error message for the most common error
+                    throw new RuntimeException(
+                        "Bref was not able to resolve secrets contained in environment variables from SecretsManager because of a permissions issue with the SecretsManager API. Did you add IAM permissions in serverless.yml to allow Lambda to access SecretsManager? (docs: https://bref.sh/docs/environment/variables.html#at-deployment-time).\nFull exception message: {$e->getMessage()}",
+                        $e->getCode(),
+                        $e,
+                    );
+                }
+                throw $e;
+            }
+
+            // If json processor not set, replace original env var with secretString value
+            if ($isJson === false) {
+                $parameters[$originalEnvVar] = $secretString;
+
+                continue;
+            }
+
+            // Otherwise JSON decode secretString and add parameters from decoded array
+            $secretValues = json_decode($secretString, true, 512, JSON_THROW_ON_ERROR);
+            foreach ($secretValues as $name => $value) {
+                $parameters[$name] = $value;
+            }
+        }
 
         return $parameters;
     }
