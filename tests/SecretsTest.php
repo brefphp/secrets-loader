@@ -8,6 +8,8 @@ use AsyncAws\Ssm\SsmClient;
 use AsyncAws\Ssm\ValueObject\Parameter;
 use Bref\Secrets\Secrets;
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\HttpClient\MockHttpClient;
+use Symfony\Component\HttpClient\Response\MockResponse;
 
 class SecretsTest extends TestCase
 {
@@ -101,6 +103,66 @@ class SecretsTest extends TestCase
 
         // Cleanup
         putenv('SOME_VARIABLE');
+    }
+
+    public function test sends the batches of parameters in parallel(): void
+    {
+        // 11 parameters: two batches, as the API takes up to 10 at a time
+        $names = [];
+        for ($i = 1; $i <= 11; $i++) {
+            $names[] = "/some/parameter-$i";
+            putenv("VAR_$i=bref-ssm:/some/parameter-$i");
+        }
+
+        $events = [];
+        $httpClient = new MockHttpClient(function (string $method, string $url, array $options) use (&$events): MockResponse {
+            $batch = json_decode($options['body'], true)['Names'];
+            $events[] = 'request';
+            $body = (function () use (&$events, $batch) {
+                $events[] = 'read';
+                yield json_encode([
+                    'Parameters' => array_map(fn (string $name) => ['Name' => $name, 'Value' => "value of $name"], $batch),
+                    'InvalidParameters' => [],
+                ]);
+            })();
+
+            return new MockResponse($body, ['http_code' => 200, 'response_headers' => ['content-type' => 'application/x-amz-json-1.1']]);
+        });
+        $ssmClient = new SsmClient(['region' => 'us-east-1', 'accessKeyId' => 'key', 'accessKeySecret' => 'secret'], null, $httpClient);
+
+        Secrets::loadSecretEnvironmentVariables($ssmClient);
+
+        // Both requests are sent before either response is read
+        $this->assertSame(['request', 'request', 'read', 'read'], $events);
+        foreach ($names as $i => $name) {
+            $this->assertSame("value of $name", getenv('VAR_' . ($i + 1)));
+            putenv('VAR_' . ($i + 1));
+        }
+    }
+
+    public function test throws a clear error message when every batch fails(): void
+    {
+        for ($i = 1; $i <= 11; $i++) {
+            putenv("VAR_$i=bref-ssm:/app/test-$i");
+        }
+
+        $ssmClient = $this->getMockBuilder(SsmClient::class)
+            ->disableOriginalConstructor()
+            ->getMock();
+        // Both batches are sent, and both fail
+        $ssmClient->expects($this->exactly(2))
+            ->method('getParameters')
+            ->willReturnCallback(fn () => ResultMockFactory::createFailing(GetParametersResult::class, 400, 'User: arn:aws:sts::123456:assumed-role/app-dev-us-east-1-lambdaRole/app-dev-hello is not authorized to perform: ssm:GetParameters'));
+
+        $expected = preg_quote('Bref was not able to resolve secrets contained in environment variables from SSM because of a permissions issue with the SSM API.', '/');
+        $this->expectExceptionMessageMatches("/^$expected/");
+        try {
+            Secrets::loadSecretEnvironmentVariables($ssmClient);
+        } finally {
+            for ($i = 1; $i <= 11; $i++) {
+                putenv("VAR_$i");
+            }
+        }
     }
 
     /**
