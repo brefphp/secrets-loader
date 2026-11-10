@@ -13,6 +13,7 @@ use Symfony\Component\HttpClient\Response\MockResponse;
 
 class SecretsTest extends TestCase
 {
+    /** @var array{Name: string, Value: string} */
     private array $resultParams = [
         'Name' => '/some/parameter',
         'Value' => 'foobar',
