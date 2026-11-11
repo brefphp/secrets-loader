@@ -101,28 +101,40 @@ class Secrets
         $parameters = [];
         $parametersNotFound = [];
 
-        // The API only accepts up to 10 parameters at a time, so we batch the calls
+        // The API only accepts up to 10 parameters at a time, so we batch the calls.
+        // async-aws sends a request as soon as it is created: create every batch before reading any,
+        // so the batches run in parallel instead of one after the other.
+        $results = [];
         foreach (array_chunk($ssmNames, 10) as $batchOfSsmNames) {
+            $results[] = $ssm->getParameters([
+                'Names' => $batchOfSsmNames,
+                'WithDecryption' => true,
+            ]);
+        }
+
+        // Every result is read, even after one failed: async-aws throws a failure nobody read when the result is destructed
+        $failure = null;
+        foreach ($results as $result) {
             try {
-                $result = $ssm->getParameters([
-                    'Names' => $batchOfSsmNames,
-                    'WithDecryption' => true,
-                ]);
                 foreach ($result->getParameters() as $parameter) {
                     $parameters[$parameter->getName()] = $parameter->getValue();
                 }
+                $parametersNotFound = array_merge($parametersNotFound, $result->getInvalidParameters());
             } catch (RuntimeException $e) {
-                if ($e->getCode() === 400) {
-                    // Extra descriptive error message for the most common error
-                    throw new RuntimeException(
-                        "Bref was not able to resolve secrets contained in environment variables from SSM because of a permissions issue with the SSM API. Did you add IAM permissions in serverless.yml to allow Lambda to access SSM? (docs: https://bref.sh/docs/environment/variables.html#at-deployment-time).\nFull exception message: {$e->getMessage()}",
-                        $e->getCode(),
-                        $e,
-                    );
-                }
-                throw $e;
+                $failure ??= $e;
             }
-            $parametersNotFound = array_merge($parametersNotFound, $result->getInvalidParameters());
+        }
+
+        if ($failure !== null) {
+            if ($failure->getCode() === 400) {
+                // Extra descriptive error message for the most common error
+                throw new RuntimeException(
+                    "Bref was not able to resolve secrets contained in environment variables from SSM because of a permissions issue with the SSM API. Did you add IAM permissions in serverless.yml to allow Lambda to access SSM? (docs: https://bref.sh/docs/environment/variables.html#at-deployment-time).\nFull exception message: {$failure->getMessage()}",
+                    $failure->getCode(),
+                    $failure,
+                );
+            }
+            throw $failure;
         }
 
         if (count($parametersNotFound) > 0) {
